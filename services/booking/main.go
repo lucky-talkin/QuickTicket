@@ -158,6 +158,75 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 	}
 	out(w, 201, event)
 }
+
+type pendingOutboxEvent struct {
+	id int64
+	aggregateID int64
+	payload []byte
+}
+
+// runOutbox publishes committed events. Row locks allow multiple booking replicas
+// to dispatch concurrently without selecting the same pending rows.
+func runOutbox(ctx context.Context, db *pgxpool.Pool, writer *kafka.Writer) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			log.Printf("outbox begin failed: %v", err)
+			continue
+		}
+		rows, err := tx.Query(ctx, `SELECT id, aggregate_id, payload FROM outbox_events WHERE published_at IS NULL ORDER BY id LIMIT 50 FOR UPDATE SKIP LOCKED`)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			log.Printf("outbox query failed: %v", err)
+			continue
+		}
+		batch := make([]pendingOutboxEvent, 0, 50)
+		for rows.Next() {
+			var event pendingOutboxEvent
+			if err = rows.Scan(&event.id, &event.aggregateID, &event.payload); err != nil {
+				break
+			}
+			batch = append(batch, event)
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		rows.Close()
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			log.Printf("outbox scan failed: %v", err)
+			continue
+		}
+		failed := false
+		for _, event := range batch {
+			msg := kafka.Message{Key: []byte(strconv.FormatInt(event.aggregateID, 10)), Value: event.payload}
+			if err = writer.WriteMessages(ctx, msg); err != nil {
+				log.Printf("outbox event %d publish failed: %v", event.id, err)
+				failed = true
+				break
+			}
+			if _, err = tx.Exec(ctx, "UPDATE outbox_events SET published_at=NOW(), attempts=attempts+1 WHERE id=$1", event.id); err != nil {
+				failed = true
+				break
+			}
+		}
+		if failed {
+			_ = tx.Rollback(ctx)
+			continue
+		}
+		if err = tx.Commit(ctx); err != nil {
+			log.Printf("outbox commit failed: %v", err)
+		}
+	}
+}
+
 func sortIDs(a []int64) {
 	for i := 0; i < len(a); i++ {
 		for j := i + 1; j < len(a); j++ {
@@ -215,6 +284,7 @@ func main() {
 	writer := &kafka.Writer{Addr: kafka.TCP(brokers...), Topic: topic, Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll}
 	defer writer.Close()
 	a := &API{db, rc, writer}
+	go runOutbox(ctx, db, writer)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { out(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("/bookings", func(w http.ResponseWriter, r *http.Request) {
