@@ -25,8 +25,8 @@ func(a *API)create(w http.ResponseWriter,r *http.Request){
  if in.Payment==""{in.Payment="success"};if in.Payment!="success"&&in.Payment!="failure"{fail(w,400,"mock_payment_result must be success or failure");return}
  ctx:=r.Context();ids:=append([]int64{},in.TicketIDs...);seen:=map[int64]bool{};for _,id:=range ids{if id<1||seen[id]{fail(w,400,"ticket IDs must be positive and unique");return};seen[id]=true}
  // Acquire per-seat Redis locks in sorted order to avoid deadlocks across multi-seat bookings.
- sortIDs(ids);tokens:=map[int64]string{};keys:=[]string{}
- for _,id:=range ids{key:=fmt.Sprintf("ticket:lock:%d",id);token:=fmt.Sprintf("booking-%d-%d",in.UserID,time.Now().UnixNano());ok,e:=a.r.SetNX(ctx,key,token,8*time.Second).Result();if e!=nil||!ok{for tid,t:=range tokens{_ = unlock.Run(ctx,a.r,[]string{fmt.Sprintf("ticket:lock:%d",tid)},t).Err()};fail(w,409,"ticket is being modified; retry");return};tokens[id]=token;keys=append(keys,key)}
+ sortIDs(ids);tokens:=map[int64]string{}
+ for _,id:=range ids{key:=fmt.Sprintf("ticket:lock:%d",id);token:=fmt.Sprintf("booking-%d-%d",in.UserID,time.Now().UnixNano());ok,e:=a.r.SetNX(ctx,key,token,8*time.Second).Result();if e!=nil||!ok{for tid,t:=range tokens{_ = unlock.Run(ctx,a.r,[]string{fmt.Sprintf("ticket:lock:%d",tid)},t).Err()};fail(w,409,"ticket is being modified; retry");return};tokens[id]=token}
  defer func(){for id,t:=range tokens{_ = unlock.Run(context.Background(),a.r,[]string{fmt.Sprintf("ticket:lock:%d",id)},t).Err()}}()
  for _,id:=range ids{
   owner,e:=a.r.Get(ctx,fmt.Sprintf("ticket:hold:%d",id)).Result();if e!=nil||owner!=strconv.FormatInt(in.UserID,10){fail(w,409,"ticket hold missing or expired");return}
