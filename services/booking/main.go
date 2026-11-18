@@ -16,7 +16,7 @@ import (
  "github.com/segmentio/kafka-go"
 )
 type API struct{db *pgxpool.Pool;r *redis.Client;writer *kafka.Writer}
-type request struct{UserID int64 `json:"user_id"`;TicketIDs []int64 `json:"ticket_ids"`;Payment string `json:"mock_payment_result"`}
+type request struct{UserID int64 `json:"user_id"`;TicketIDs []int64 `json:"ticket_ids"`;Payment string `json:"mock_payment_result"`;AdmissionToken string `json:"admission_token"`}
 func out(w http.ResponseWriter,c int,v any){w.Header().Set("Content-Type","application/json");w.WriteHeader(c);_=json.NewEncoder(w).Encode(v)}
 func fail(w http.ResponseWriter,c int,s string){out(w,c,map[string]string{"error":s})}
 var unlock=redis.NewScript(`if redis.call("GET",KEYS[1]) == ARGV[1] then return redis.call("DEL",KEYS[1]) else return 0 end`)
@@ -28,7 +28,12 @@ func(a *API)create(w http.ResponseWriter,r *http.Request){
  sortIDs(ids);tokens:=map[int64]string{};keys:=[]string{}
  for _,id:=range ids{key:=fmt.Sprintf("ticket:lock:%d",id);token:=fmt.Sprintf("booking-%d-%d",in.UserID,time.Now().UnixNano());ok,e:=a.r.SetNX(ctx,key,token,8*time.Second).Result();if e!=nil||!ok{for tid,t:=range tokens{_ = unlock.Run(ctx,a.r,[]string{fmt.Sprintf("ticket:lock:%d",tid)},t).Err()};fail(w,409,"ticket is being modified; retry");return};tokens[id]=token;keys=append(keys,key)}
  defer func(){for id,t:=range tokens{_ = unlock.Run(context.Background(),a.r,[]string{fmt.Sprintf("ticket:lock:%d",id)},t).Err()}}()
- for _,id:=range ids{owner,e:=a.r.Get(ctx,fmt.Sprintf("ticket:hold:%d",id)).Result();if e!=nil||owner!=strconv.FormatInt(in.UserID,10){fail(w,409,"ticket hold missing or expired");return}}
+ for _,id:=range ids{
+  owner,e:=a.r.Get(ctx,fmt.Sprintf("ticket:hold:%d",id)).Result();if e!=nil||owner!=strconv.FormatInt(in.UserID,10){fail(w,409,"ticket hold missing or expired");return}
+  var eventID int64;if e=a.db.QueryRow(ctx,"SELECT event_id FROM tickets WHERE id=$1",id).Scan(&eventID);e!=nil{fail(w,404,"ticket not found");return}
+  admitted,e:=a.r.Get(ctx,fmt.Sprintf("event:%d:token:%d",eventID,in.UserID)).Result()
+  if e!=nil||in.AdmissionToken==""||admitted!=in.AdmissionToken{fail(w,403,"valid waiting-room admission token required");return}
+ }
  tx,e:=a.db.Begin(ctx);if e!=nil{fail(w,500,e.Error());return};defer tx.Rollback(ctx)
  var total float64
  for _,id:=range ids{var price float64;e=tx.QueryRow(ctx,"UPDATE tickets SET status='booked' WHERE id=$1 AND status='available' RETURNING price",id).Scan(&price);if e!=nil{fail(w,409,"ticket no longer available");return};total+=price}
