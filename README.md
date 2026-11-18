@@ -48,6 +48,32 @@ docker compose up
 
 Infrastructure: PostgreSQL (5432), Redis (6379), Kafka (9092).
 
+## Seed Bengaluru events and demo tickets
+
+A re-runnable SQL seed is provided at `db/seeds/001_bengaluru_events_2026_27.sql`. It includes a small set of Bengaluru concerts and a festival based on public event listings checked on 18 November 2026.
+
+Run it after the stack is up:
+
+```bash
+docker compose exec -T postgres psql -U quickticket -d quickticket < db/seeds/001_bengaluru_events_2026_27.sql
+```
+
+Verify the seeded catalogue and demo ticket inventory:
+
+```bash
+curl http://localhost:8081/events
+curl http://localhost:8081/venues
+curl http://localhost:8081/performers
+curl http://localhost:8082/tickets
+```
+
+The script inserts venues, performers, events, and 20 synthetic demo tickets per event. It can be run more than once without duplicating those rows. Ticket labels, quantities, venue capacities, and ₹1,499 demo prices are illustrative only; they are not official seat maps, real venue capacities, or actual ticket prices. Event listings can change, so check the organiser or official ticketing partner before treating a listing as current.
+
+Event listing sources:
+- [District: Bengaluru events](https://www.district.in/events/upcoming-events-in-bengaluru)
+- [India What's On: Bengaluru](https://indiawhatson.com/cities/bengaluru/)
+- [All Day Music: Bengaluru November 2026](https://www.alldaymusic.club/events/bengaluru/november-2026)
+
 ## 1. Start the project
 
 Requirements: Docker and Docker Compose.
