@@ -42,7 +42,7 @@ Waiting room:
 - Queue admission is automatic when a user joins or checks status and a slot is available.
 - `QUEUE_CAPACITY` controls concurrent admitted users; admission tokens expire after `ADMISSION_TTL_SECONDS` (default 600).
 
-## Redis lock and hold
+## Example request flow\n\n1. Create user, venue, performer and event through Catalog.\n2. Create event tickets through Inventory.\n3. Join `POST /queue/join` and poll `POST /queue/status` until `status` is `admitted`. Copy `admission_token`.\n4. Hold the seat with `POST /holds`, passing `ticket_id`, `user_id` and `admission_token`.\n5. Create the booking with `POST /bookings`, passing the same token and `mock_payment_result` (`success` or `failure`).\n\n## Redis lock and hold
 
 Inventory acquires a per-ticket Redis lock using SET NX with a random owner token and expiry. It then creates the short-lived hold. Lock release uses a Lua compare-and-delete operation, so one request cannot release another request's lock. Booking checks that the hold belongs to the requesting user and then uses a PostgreSQL transaction plus conditional ticket updates as the final consistency guard.
 
@@ -50,7 +50,7 @@ A Redis lock coordinates concurrent application requests; PostgreSQL constraints
 
 ## Virtual waiting room
 
-The waiting-room service stores an event-specific FIFO queue in Redis. Admission is bounded by ADMISSION_RATE and produces a short-lived admission token. The design illustrates controlled traffic release before users enter the booking flow. For production, admission tokens should be signed or stored with ownership, queue state should be resilient to Redis failover, and rate limits should be enforced at the gateway.
+The waiting-room service stores an event-specific FIFO queue in Redis. It issues a token only when a user is admitted; both inventory holds and booking requests validate that token. Admission is bounded by `QUEUE_CAPACITY` concurrent users and produces a short-lived admission token (`ADMISSION_TTL_SECONDS`). The design illustrates controlled traffic release before users enter the booking flow. For production, admission tokens should be signed or stored with ownership, queue state should be resilient to Redis failover, and rate limits should be enforced at the gateway.
 
 ## Kafka
 
