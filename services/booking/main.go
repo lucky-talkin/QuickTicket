@@ -138,17 +138,23 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	event := map[string]any{"event_id": fmt.Sprintf("booking-%d-created", bookingID), "event_type": "BookingCreated", "booking_id": bookingID, "user_id": in.UserID, "ticket_ids": ids, "total": total, "status": status, "payment_status": payment}
+	payload, e := json.Marshal(event)
+	if e != nil {
+		fail(w, 500, "could not encode booking event")
+		return
+	}
+	// Booking state and its event are committed atomically in PostgreSQL.
+	if _, e = tx.Exec(ctx, "INSERT INTO outbox_events(aggregate_type,aggregate_id,event_type,payload) VALUES($1,$2,$3,$4)", "booking", bookingID, "BookingCreated", payload); e != nil {
+		fail(w, 500, e.Error())
+		return
+	}
 	if e = tx.Commit(ctx); e != nil {
 		fail(w, 500, e.Error())
 		return
 	}
 	for _, id := range ids {
 		_ = a.r.Del(ctx, fmt.Sprintf("ticket:hold:%d", id)).Err()
-	}
-	event := map[string]any{"booking_id": bookingID, "user_id": in.UserID, "ticket_ids": ids, "total": total, "status": status, "payment_status": payment}
-	payload, _ := json.Marshal(event)
-	if e = a.writer.WriteMessages(ctx, kafka.Message{Key: []byte(strconv.FormatInt(bookingID, 10)), Value: payload}); e != nil {
-		log.Printf("booking %d committed but event publish failed: %v", bookingID, e)
 	}
 	out(w, 201, event)
 }
