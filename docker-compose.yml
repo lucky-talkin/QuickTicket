@@ -1,19 +1,10 @@
 services:
  postgres:
   image: postgres:16
-  environment:
-   POSTGRES_USER: quickticket
-   POSTGRES_PASSWORD: quickticket
-   POSTGRES_DB: quickticket
+  environment: {POSTGRES_USER: quickticket, POSTGRES_PASSWORD: quickticket, POSTGRES_DB: quickticket}
   ports: ["5432:5432"]
-  volumes:
-   - quickticket_data:/var/lib/postgresql/data
-   - ./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
-  healthcheck:
-   test: ["CMD-SHELL","pg_isready -U quickticket -d quickticket"]
-   interval: 5s
-   timeout: 3s
-   retries: 20
+  volumes: ["quickticket_data:/var/lib/postgresql/data","./db/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro"]
+  healthcheck: {test: ["CMD-SHELL","pg_isready -U quickticket -d quickticket"], interval: 5s, timeout: 3s, retries: 20}
  redis:
   image: redis:7-alpine
   ports: ["6379:6379"]
@@ -32,24 +23,44 @@ services:
    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
    KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
- api:
+ catalog:
   image: golang:1.23
   working_dir: /app
   volumes: [".:/app"]
-  command: sh -c "go mod tidy && go run ./cmd/api"
-  environment:
-   DATABASE_URL: postgres://quickticket:quickticket@postgres:5432/quickticket?sslmode=disable
-   REDIS_ADDR: redis:6379
-   KAFKA_BROKERS: kafka:9092
-   KAFKA_TOPIC: booking-events
-   PORT: 8080
-  ports: ["8080:8080"]
-  depends_on:
-   postgres:
-    condition: service_healthy
-   redis:
-    condition: service_started
-   kafka:
-    condition: service_started
+  command: sh -c "go run ./services/catalog"
+  environment: {DATABASE_URL: postgres://quickticket:quickticket@postgres:5432/quickticket?sslmode=disable, PORT: "8081"}
+  ports: ["8081:8081"]
+  depends_on: {postgres: {condition: service_healthy}}
+ inventory:
+  image: golang:1.23
+  working_dir: /app
+  volumes: [".:/app"]
+  command: sh -c "go run ./services/inventory"
+  environment: {DATABASE_URL: postgres://quickticket:quickticket@postgres:5432/quickticket?sslmode=disable, REDIS_ADDR: redis:6379, PORT: "8082"}
+  ports: ["8082:8082"]
+  depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}}
+ booking:
+  image: golang:1.23
+  working_dir: /app
+  volumes: [".:/app"]
+  command: sh -c "go run ./services/booking"
+  environment: {DATABASE_URL: postgres://quickticket:quickticket@postgres:5432/quickticket?sslmode=disable, REDIS_ADDR: redis:6379, KAFKA_BROKERS: kafka:9092, PORT: "8083"}
+  ports: ["8083:8083"]
+  depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_started}, kafka: {condition: service_started}}
+ waiting-room:
+  image: golang:1.23
+  working_dir: /app
+  volumes: [".:/app"]
+  command: sh -c "go run ./services/waiting-room"
+  environment: {REDIS_ADDR: redis:6379, PORT: "8084", ADMISSION_RATE: "2"}
+  ports: ["8084:8084"]
+  depends_on: {redis: {condition: service_started}}
+ booking-events:
+  image: golang:1.23
+  working_dir: /app
+  volumes: [".:/app"]
+  command: sh -c "go run ./services/booking-events"
+  environment: {DATABASE_URL: postgres://quickticket:quickticket@postgres:5432/quickticket?sslmode=disable, KAFKA_BROKERS: kafka:9092}
+  depends_on: {postgres: {condition: service_healthy}, kafka: {condition: service_started}}
 volumes:
  quickticket_data:
