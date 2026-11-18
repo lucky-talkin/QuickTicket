@@ -20,7 +20,6 @@ var resources=map[string]Resource{
  "venues":{"venues",[]string{"name","city","capacity"}},
  "performers":{"performers",[]string{"name","description"}},
  "events":{"events",[]string{"name","description","event_type","starts_at","venue_id","performer_id"}},
- "tickets":{"tickets",[]string{"event_id","section","seat_number","price","status"}},
 }
 type API struct{db *pgxpool.Pool}
 func out(w http.ResponseWriter,c int,v any){w.Header().Set("Content-Type","application/json");w.WriteHeader(c);_=json.NewEncoder(w).Encode(v)}
