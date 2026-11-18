@@ -364,7 +364,40 @@ All four HTTP services also expose `GET /health`.
 | 409 | Seat already held/booked, lock contention, or unavailable ticket |
 | 503 | Redis unavailable |
 
-## 10. What to observe while testing
+## 10. Automated end-to-end test (Python)
+
+The standard-library test script creates its own user, venue, performer, event, and tickets. It then exercises:
+
+- Health checks for all four HTTP services.
+- Waiting-room admission and token issuance for two users.
+- Exclusive ticket holds (the second buyer must receive HTTP 409).
+- Successful booking (ticket becomes `booked`).
+- Failed mock payment (booking is cancelled and ticket returns to `available`).
+- Booking history and, by default, published transactional-outbox rows.
+
+Start the stack and apply migrations first:
+
+```bash
+docker compose up --build -d
+docker compose exec -T postgres psql -U quickticket -d quickticket < db/migrations/002_allow_ticket_rebooking.sql
+docker compose exec -T postgres psql -U quickticket -d quickticket < db/migrations/003_transactional_outbox.sql
+```
+
+Run from the repository root with Python 3.10+:
+
+```bash
+python3 tests/e2e_quickticket.py
+```
+
+The outbox assertion uses `docker compose exec` and `psql`, so Docker Compose and the PostgreSQL container must be available to the machine running the script. To skip only that database-level assertion:
+
+```bash
+python3 tests/e2e_quickticket.py --skip-outbox-check
+```
+
+The test creates uniquely named records and does not delete them, making failures easier to inspect. It expects the default waiting-room capacity of at least two. It does not reset your database or Redis data.
+
+## 11. What to observe while testing
 
 - **Redis:** temporary `ticket:hold:{ticketID}` keys, per-seat `ticket:lock:{ticketID}` keys, and event queue/admission sorted sets.
 - **Waiting room:** submit multiple users for the same event; only up to `QUEUE_CAPACITY` are admitted at once. Poll status for users still waiting.
