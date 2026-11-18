@@ -46,7 +46,7 @@ func(a *API)hold(w http.ResponseWriter,r *http.Request){
  ctx:=r.Context();lockKey:=fmt.Sprintf("ticket:lock:%d",in.TicketID);holdKey:=fmt.Sprintf("ticket:hold:%d",in.TicketID)
  lockToken:=fmt.Sprintf("%d-%d",in.UserID,time.Now().UnixNano())
  locked,e:=a.r.SetNX(ctx,lockKey,lockToken,4*time.Second).Result();if e!=nil{fail(w,503,"Redis unavailable");return};if !locked{fail(w,409,"ticket operation in progress");return}
- defer unlock.Run(ctx,a.r,[]string{lockKey},lockToken)
+ defer unlock.Run(context.Background(),a.r,[]string{lockKey},lockToken)
  var available bool;var eventID int64;e=a.db.QueryRow(ctx,"SELECT status='available',event_id FROM tickets WHERE id=$1",in.TicketID).Scan(&available,&eventID)
  if e!=nil||!available{fail(w,409,"ticket is not available");return}
  admitted,e:=a.r.Get(ctx,fmt.Sprintf("event:%d:token:%d",eventID,in.UserID)).Result()
