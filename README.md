@@ -1,6 +1,6 @@
 # QuickTicket
 
-A backend-only Ticketmaster-style system-design project. It demonstrates small Go services, CRUD APIs, Redis seat holds and distributed locks, a virtual waiting room, PostgreSQL booking transactions, Kafka events, and mock payments.
+A backend-only Ticketmaster-style system-design project. It demonstrates small Go services, CRUD APIs, Redis seat holds and distributed locks, a virtual waiting room, PostgreSQL booking transactions, Kafka events, transactional outbox delivery, and mock payments.
 
 ## Independent service builds
 
@@ -9,7 +9,7 @@ Each Go microservice is an independent Go module with its own `go.mod`, `go.sum`
 - `services/catalog/`
 - `services/inventory/`
 - `services/booking/`
-- `services/waiting-room/`
+- `services/waiting-room/` (HTTP handlers, queue service, admission-token service)
 - `services/booking-events/`
 
 Docker Compose builds each service separately using that directory as its build context. The Dockerfile downloads dependencies, builds a static Go binary, and copies only the binary into a minimal runtime image.
@@ -372,7 +372,7 @@ All four HTTP services also expose `GET /health`.
 - **PostgreSQL:** ticket status, booking status, payment status, and booking-ticket relationship.
 - **Kafka:** after a booking, inspect `docker compose logs -f booking-events` for the consumed booking event.
 
-## 11. Database migration for existing volumes
+## 11. Database migrations for existing volumes
 
 If you already initialized PostgreSQL with the earlier schema, run this once:
 
@@ -382,8 +382,16 @@ docker compose exec -T postgres psql -U quickticket -d quickticket < db/migratio
 
 This removes the old unique constraint on `booking_tickets.ticket_id`. It is needed because a failed payment keeps its cancelled booking record while making the ticket available for another booking.
 
+Apply the transactional outbox migration:
+
+```bash
+docker compose exec -T postgres psql -U quickticket -d quickticket < db/migrations/003_transactional_outbox.sql
+```
+
+New databases get the outbox table automatically from `db/schema.sql`.
+
 ## Scope and known limitations
 
 No frontend, real payment gateway, authentication, API gateway, Python service, Kubernetes, or production-grade deployment. The project is intentionally focused on CRUD, seat contention, temporary holds, admission control, transaction boundaries, and asynchronous events.
 
-Kafka publishing currently occurs after the booking transaction commits. A process failure between those operations can leave a committed booking without a Kafka event; a transactional outbox is the next reliability improvement. Redis locks are short-lived coordination leases; PostgreSQL conditional updates and transactions remain the final inventory consistency guard.
+Booking rows and `BookingCreated` outbox events are inserted in the same PostgreSQL transaction. The booking service polls pending outbox rows and publishes them to Kafka, marking them published after acknowledgement. Delivery is at-least-once: consumers should deduplicate by the stable `event_id` because a crash after Kafka acknowledgement but before the database update can cause a repeat. Apply migration `003_transactional_outbox.sql` to existing databases. Redis locks are short-lived coordination leases; PostgreSQL conditional updates and transactions remain the final inventory consistency guard.
