@@ -1,6 +1,6 @@
 # QuickTicket
 
-A backend-only Ticketmaster-style system-design project. It demonstrates small Go services, CRUD APIs, Redis seat holds and distributed locks, a virtual waiting room, PostgreSQL booking transactions, Kafka events, transactional outbox delivery, and mock payments.
+A Bookmyshow-style  project. It demonstrates small Go services, Redis seat holds and distributed locks, a virtual waiting room, PostgreSQL booking transactions, Kafka events, transactional outbox delivery, and mock payments.
 
 ## Independent service builds
 
