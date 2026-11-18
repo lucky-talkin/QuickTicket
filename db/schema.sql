@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS bookings (
 );
 CREATE TABLE IF NOT EXISTS booking_tickets (
  booking_id BIGINT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
- ticket_id BIGINT NOT NULL UNIQUE REFERENCES tickets(id),
+ ticket_id BIGINT NOT NULL REFERENCES tickets(id),
  PRIMARY KEY (booking_id,ticket_id)
 );
 CREATE INDEX IF NOT EXISTS idx_events_starts_at ON events(starts_at);
