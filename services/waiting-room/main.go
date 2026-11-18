@@ -2,6 +2,8 @@ package main
 
 import (
  "context"
+ "crypto/rand"
+ "encoding/hex"
  "encoding/json"
  "fmt"
  "log"
@@ -13,6 +15,12 @@ import (
  "github.com/redis/go-redis/v9"
 )
 type API struct{r *redis.Client;capacity int;ttl time.Duration}
+func admissionToken() string { b:=make([]byte,24);if _,e:=rand.Read(b);e!=nil{return ""};return hex.EncodeToString(b) }
+func (a *API) token(ctx context.Context,eventID,userID int64)(string,error){
+ key:=fmt.Sprintf("event:%d:token:%d",eventID,userID);token,e:=a.r.Get(ctx,key).Result();if e==nil{return token,nil}
+ token=admissionToken();if token==""{return "",fmt.Errorf("token generation failed")}
+ if e=a.r.SetNX(ctx,key,token,a.ttl).Err();e!=nil{return "",e};return a.r.Get(ctx,key).Result()
+}
 type input struct{EventID int64 `json:"event_id"`;UserID int64 `json:"user_id"`}
 func out(w http.ResponseWriter,c int,v any){w.Header().Set("Content-Type","application/json");w.WriteHeader(c);_=json.NewEncoder(w).Encode(v)}
 func fail(w http.ResponseWriter,c int,s string){out(w,c,map[string]string{"error":s})}
@@ -43,12 +51,12 @@ func(a *API)enqueue(w http.ResponseWriter,r *http.Request){var in input;if json.
  _,e:=a.r.ZAddArgs(ctx,waiting,redis.ZAddArgs{NX:true,Members:[]redis.Z{{Score:float64(time.Now().UnixMilli()),Member:member}}}).Result();if e!=nil{fail(w,503,e.Error());return}
  result,e:=advance.Run(ctx,a.r,[]string{waiting,admitted},member,time.Now().UnixMilli(),a.capacity,a.ttl.Milliseconds()).Slice();if e!=nil{fail(w,503,e.Error());return}
  admittedNow:=result[0].(int64)==1;position:=result[1].(int64);response:=map[string]any{"event_id":in.EventID,"user_id":in.UserID,"status":"waiting","position":position}
- if admittedNow{response["status"]="admitted";response["admission_expires_in_seconds"]=int(a.ttl.Seconds())};out(w,200,response)
+ if admittedNow{token,e:=a.token(ctx,in.EventID,in.UserID);if e!=nil{fail(w,503,e.Error());return};response["status"]="admitted";response["admission_token"]=token;response["admission_expires_in_seconds"]=int(a.ttl.Seconds())};out(w,200,response)
 }
 func(a *API)status(w http.ResponseWriter,r *http.Request){var in input;if json.NewDecoder(r.Body).Decode(&in)!=nil||in.EventID<1||in.UserID<1{fail(w,400,"event_id and user_id required");return};ctx:=r.Context();member:=strconv.FormatInt(in.UserID,10)
  waiting:=fmt.Sprintf("event:%d:waiting",in.EventID);admitted:=fmt.Sprintf("event:%d:admitted",in.EventID)
  result,e:=advance.Run(ctx,a.r,[]string{waiting,admitted},member,time.Now().UnixMilli(),a.capacity,a.ttl.Milliseconds()).Slice();if e!=nil{fail(w,503,e.Error());return}
- if result[0].(int64)==1{out(w,200,map[string]any{"status":"admitted","event_id":in.EventID,"user_id":in.UserID,"admission_expires_in_seconds":int(a.ttl.Seconds())});return}
+ if result[0].(int64)==1{token,e:=a.token(ctx,in.EventID,in.UserID);if e!=nil{fail(w,503,e.Error());return};out(w,200,map[string]any{"status":"admitted","event_id":in.EventID,"user_id":in.UserID,"admission_token":token,"admission_expires_in_seconds":int(a.ttl.Seconds())});return}
  pos:=result[1].(int64);if pos<0{fail(w,404,"user is not in this event queue");return};out(w,200,map[string]any{"status":"waiting","event_id":in.EventID,"user_id":in.UserID,"position":pos})
 }
 func main(){addr:=os.Getenv("REDIS_ADDR");if addr==""{addr="redis:6379"};rc:=redis.NewClient(&redis.Options{Addr:addr});defer rc.Close();ctx:=context.Background();if e:=rc.Ping(ctx).Err();e!=nil{log.Fatal(e)}
