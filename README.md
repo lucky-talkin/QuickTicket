@@ -28,19 +28,19 @@ Catalog service:
 
 Inventory service:
 - Same CRUD pattern for `/tickets`
-- `POST /holds` with `{"ticket_id":1,"user_id":1}`
+- `POST /holds` with `{"ticket_id":1,"user_id":1,"admission_token":"TOKEN_FROM_QUEUE"}`
 - A hold lasts five minutes
 
 Booking service:
-- `POST /bookings` with `{"user_id":1,"ticket_ids":[1],"mock_payment_result":"success"}`
+- `POST /bookings` with `{"user_id":1,"ticket_ids":[1],"admission_token":"TOKEN_FROM_QUEUE","mock_payment_result":"success"}`
 - Set mock_payment_result to `failure` to simulate a declined payment
 - `GET /bookings`
 
 Waiting room:
 - `POST /queue/join` with `{"event_id":1,"user_id":1}`
-- `GET /queue/status?event_id=1&user_id=1`
-- `POST /queue/admit` with `{"event_id":1}` (operator/demo endpoint)
-- `ADMISSION_RATE` controls how many users are admitted per call
+- `POST /queue/status` with `{"event_id":1,"user_id":1}`
+- Queue admission is automatic when a user joins or checks status and a slot is available.
+- `QUEUE_CAPACITY` controls concurrent admitted users; admission tokens expire after `ADMISSION_TTL_SECONDS` (default 600).
 
 ## Redis lock and hold
 
