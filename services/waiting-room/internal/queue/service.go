@@ -31,7 +31,10 @@ local waiting=KEYS[1]; local admitted=KEYS[2]; local member=ARGV[1]
 local now=tonumber(ARGV[2]); local capacity=tonumber(ARGV[3]); local ttl=tonumber(ARGV[4])
 redis.call('ZREMRANGEBYSCORE',admitted,'-inf',now)
 local current=redis.call('ZSCORE',admitted,member)
-if current then return {1,0,tonumber(current)} end
+if current then
+ redis.call('ZREM',waiting,member)
+ return {1,0,tonumber(current)}
+end
 local active=redis.call('ZCARD',admitted)
 while active < capacity do
  local next=redis.call('ZRANGE',waiting,0,0)
