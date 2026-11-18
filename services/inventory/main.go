@@ -5,7 +5,6 @@ import (
  "encoding/json"
  "fmt"
  "errors"
- "strconv"
  "log"
  "net/http"
  "os"
@@ -38,7 +37,7 @@ func (a *API) tickets(w http.ResponseWriter,r *http.Request) {
  }
  fail(w,405,"method not allowed")
 }
-type holdRequest struct{TicketID int64 `json:"ticket_id"`;UserID int64 `json:"user_id"`}
+type holdRequest struct{TicketID int64 `json:"ticket_id"`;UserID int64 `json:"user_id"`;AdmissionToken string `json:"admission_token"`}
 func out(w http.ResponseWriter,c int,v any){w.Header().Set("Content-Type","application/json");w.WriteHeader(c);_=json.NewEncoder(w).Encode(v)}
 func fail(w http.ResponseWriter,c int,s string){out(w,c,map[string]string{"error":s})}
 var unlock=redis.NewScript(`if redis.call("GET",KEYS[1]) == ARGV[1] then return redis.call("DEL",KEYS[1]) else return 0 end`)
@@ -50,6 +49,8 @@ func(a *API)hold(w http.ResponseWriter,r *http.Request){
  defer unlock.Run(ctx,a.r,[]string{lockKey},lockToken)
  var available bool;e=a.db.QueryRow(ctx,"SELECT status='available' FROM tickets WHERE id=$1",in.TicketID).Scan(&available)
  if e!=nil||!available{fail(w,409,"ticket is not available");return}
+ admitted,e:=a.r.Get(ctx,fmt.Sprintf("event:%d:token:%d",eventID,in.UserID)).Result()
+ if e!=nil||in.AdmissionToken==""||admitted!=in.AdmissionToken{fail(w,403,"valid waiting-room admission token required");return}
  holdValue:=strconv.FormatInt(in.UserID,10)
  ok,e:=a.r.SetNX(ctx,holdKey,holdValue,5*time.Minute).Result();if e!=nil{fail(w,503,"Redis unavailable");return};if !ok{fail(w,409,"ticket already held");return}
  out(w,201,map[string]any{"ticket_id":in.TicketID,"user_id":in.UserID,"expires_in_seconds":300})
