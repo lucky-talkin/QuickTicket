@@ -52,7 +52,7 @@ services:
   working_dir: /app
   volumes: [".:/app"]
   command: sh -c "go run ./services/waiting-room"
-  environment: {REDIS_ADDR: redis:6379, PORT: "8084", ADMISSION_RATE: "2"}
+  environment: {REDIS_ADDR: redis:6379, PORT: "8084", QUEUE_CAPACITY: "2", ADMISSION_TTL_SECONDS: "600"}
   ports: ["8084:8084"]
   depends_on: {redis: {condition: service_started}}
  booking-events:
