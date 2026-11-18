@@ -58,7 +58,7 @@ sequenceDiagram
 
     Customer->>INV: POST /holds (ticket_id, user_id, token)
     INV->>Redis: Acquire ticket lock (SET NX)
-    INV->>PG: Check ticket is available; read event_id
+    INV->>PG: Check ticket availability and read event_id
     INV->>Redis: Validate event/user admission token
     INV->>Redis: Create 5-minute ticket hold (SET NX)
     INV->>Redis: Release lock with owner-token check
