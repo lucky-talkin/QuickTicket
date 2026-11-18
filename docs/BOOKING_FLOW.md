@@ -7,9 +7,9 @@ This document explains how a request moves through the QuickTicket backend. It i
 | Service | Port | Owns |
 |---|---:|---|
 | Catalog | 8081 | CRUD for users, venues, performers, events |
-| Waiting Room | 8084 | Event FIFO queue and admission tokens in Redis |
+| Waiting Room | 8084 | HTTP API, FIFO queue service, admission-token service; Redis is the shared state store |
 | Inventory | 8082 | Ticket CRUD and temporary ticket holds |
-| Booking | 8083 | Booking transaction, mock payment result, Kafka publish |
+| Booking | 8083 | Booking transaction, mock payment result, transactional outbox dispatcher |
 | Booking Events | worker | Consumes booking events from Kafka and logs them |
 
 Shared infrastructure:
@@ -70,22 +70,23 @@ sequenceDiagram
     BOOK->>PG: Begin transaction
     BOOK->>PG: Conditionally mark tickets booked
     BOOK->>PG: Insert booking and booking_tickets
+    BOOK->>PG: Insert BookingCreated outbox row
     BOOK->>PG: Commit transaction
     BOOK->>Redis: Delete ticket holds
-    BOOK->>Kafka: Publish booking event
     BOOK-->>Customer: booking result
+    Note over BOOK,PG: Background dispatcher publishes committed outbox rows to Kafka
 ```
 
 ### Step-by-step
 
 1. The customer joins the event queue with `POST /queue/join`.
 2. Waiting Room adds the user to an event-specific Redis sorted set. The score is the enqueue timestamp; `NX` prevents duplicate joins from changing the original queue position.
-3. A Redis Lua script atomically expires old admissions and admits the oldest waiting users until the configured capacity is reached.
-4. An admitted user receives an admission token. The token is stored in Redis with a TTL and must be sent to Inventory and Booking.
+3. The queue package runs a Redis Lua script that atomically expires old admissions and admits the oldest waiting users until the configured capacity is reached.
+4. The admission package creates or retrieves an admission token. The token is stored in Redis with a TTL and must be sent to Inventory and Booking.
 5. Inventory acquires a short-lived Redis lock for the ticket, checks PostgreSQL availability, validates the admission token, and creates a five-minute Redis hold for that user.
 6. Booking acquires locks for all requested tickets in sorted ID order, checks that each hold belongs to the user, and validates the admission token for each ticket's event.
 7. Booking starts a PostgreSQL transaction. It conditionally changes each ticket from `available` to `booked`, calculates the total, inserts the booking and its ticket relationships, and commits.
-8. After commit, Booking removes the Redis holds, publishes a Kafka event, and returns the booking result.
+8. Booking inserts a `BookingCreated` event into `outbox_events` before committing. The booking and event therefore either both commit or neither commits. After commit, Booking removes the Redis holds and returns the booking result. A background dispatcher publishes pending outbox rows to Kafka.
 
 ## 4. Waiting-room flow
 
@@ -128,6 +129,8 @@ Admitted response:
   "admission_expires_in_seconds": 600
 }
 ```
+
+The waiting-room code is separated into `internal/httpapi` (HTTP parsing and responses), `internal/queue` (FIFO operations and Lua script), and `internal/admission` (token creation and TTL). `main.go` only wires dependencies and starts the server.
 
 The default Compose configuration admits up to two users concurrently and gives admission tokens a 600-second TTL. These are demo settings, not recommended production values.
 
@@ -199,12 +202,17 @@ The failed booking remains in booking history, while its tickets become availabl
 
 ```mermaid
 flowchart LR
-    A[Booking transaction commits] --> B[Booking publishes booking-events]
-    B --> C[Kafka topic: booking-events]
-    C --> D[Booking Events consumer group]
-    D --> E[Deserialize event]
-    E --> F[Log event]
+    A[Booking transaction] --> B[(PostgreSQL)]
+    B --> C[outbox_events pending row]
+    C --> D[Background dispatcher]
+    D --> E[Kafka topic: booking-events]
+    E --> F[Booking Events consumer group]
+    F --> G[Deserialize and log event]
+    D --> H[Mark outbox row published]
+    H --> B
 ```
+
+The booking transaction writes both the booking state and its outbox event to PostgreSQL. The dispatcher polls pending rows, locks a batch using `FOR UPDATE SKIP LOCKED`, publishes each event, and marks it published after Kafka acknowledges it.
 
 The event currently contains:
 
@@ -217,7 +225,7 @@ The event currently contains:
 
 The Booking Events worker only logs consumed messages. It is a placeholder for future consumers such as email, notifications, analytics, or ticket delivery.
 
-**Reliability note:** Kafka publishing happens after the PostgreSQL commit. A process failure between commit and publish can leave a committed booking without an event. A transactional outbox would address this in a production-oriented extension.
+**Delivery semantics:** the outbox closes the database-commit/publish gap, but publication is at-least-once. If the process crashes after Kafka acknowledges an event but before PostgreSQL records `published_at`, the event can be sent again. The stable `event_id` lets consumers deduplicate. Keep consumers idempotent. This demo dispatcher holds row locks while publishing a small batch; a high-throughput production system may use shorter claim leases and separate publish/ack phases.
 
 ## 8. Important boundaries and current limitations
 
@@ -228,6 +236,7 @@ The Booking Events worker only logs consumed messages. It is a placeholder for f
 - Redis locks are short-lived leases, not a replacement for database transactions or conditional updates.
 - The payment integration is mocked. No external payment provider is called.
 - Kafka consumer processing currently logs events; it does not update another service or send notifications.
+- The outbox dispatcher is part of the Booking process and polls once per second. Multiple replicas can share work using PostgreSQL `SKIP LOCKED`, but duplicate publication remains possible around the Kafka-ack/database-commit boundary.
 - There is no authentication, API gateway, frontend, or production deployment configuration.
 
 ## 9. Suggested demo sequence
