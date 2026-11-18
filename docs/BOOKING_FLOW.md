@@ -132,6 +132,12 @@ Admitted response:
 
 The waiting-room code is separated into `internal/httpapi` (HTTP parsing and responses), `internal/queue` (FIFO operations and Lua script), and `internal/admission` (token creation and TTL). `main.go` only wires dependencies and starts the server.
 
+**Why Lua instead of separate Redis commands?**
+
+The queue transition touches several keys and depends on the result of earlier commands. If the application performed each step separately, two concurrent polls could both observe a free slot and both admit a user. Redis executes a Lua script atomically, so no other Redis command can interleave between expiry cleanup, capacity checks, FIFO promotion, and position lookup.
+
+Lua also reduces network round trips and keeps the state transition close to the Redis data it changes. It does not make Redis, PostgreSQL, and Kafka one distributed transaction; it only makes this group of Redis operations atomic.
+
 The default Compose configuration admits up to two users concurrently and gives admission tokens a 600-second TTL. These are demo settings, not recommended production values.
 
 ## 5. Seat hold and concurrency flow
@@ -216,6 +222,8 @@ The booking transaction writes both the booking state and its outbox event to Po
 
 The event currently contains:
 
+- `event_id` (stable deduplication key)
+- `event_type` (`BookingCreated`)
 - `booking_id`
 - `user_id`
 - `ticket_ids`
