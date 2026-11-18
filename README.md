@@ -2,6 +2,40 @@
 
 A backend-only Ticketmaster-style system-design project. It demonstrates small Go services, CRUD APIs, Redis seat holds and distributed locks, a virtual waiting room, PostgreSQL booking transactions, Kafka events, and mock payments.
 
+## Independent service builds
+
+Each Go microservice is an independent Go module with its own `go.mod`, `go.sum`, and multi-stage `Dockerfile`:
+
+- `services/catalog/`
+- `services/inventory/`
+- `services/booking/`
+- `services/waiting-room/`
+- `services/booking-events/`
+
+Docker Compose builds each service separately using that directory as its build context. The Dockerfile downloads dependencies, builds a static Go binary, and copies only the binary into a minimal runtime image.
+
+To build all service images without starting containers:
+
+```bash
+docker compose build
+```
+
+To build one service:
+
+```bash
+docker compose build catalog
+docker compose build inventory
+docker compose build booking
+docker compose build waiting-room
+docker compose build booking-events
+```
+
+To run the stack:
+
+```bash
+docker compose up
+```
+
 ## Architecture
 
 | Service | Base URL | Responsibility |
