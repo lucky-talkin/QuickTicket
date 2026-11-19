@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -99,7 +100,7 @@ func (s *SearchAPI) search(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	_, _ = w.ReadFrom(resp.Body)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func main() {
