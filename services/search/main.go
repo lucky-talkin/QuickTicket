@@ -65,19 +65,34 @@ func (s *SearchAPI) consume(ctx context.Context, brokers, topic, group string) {
 	defer r.Close()
 	for {
 		msg, err := r.FetchMessage(ctx)
-		if err != nil { if ctx.Err() != nil { return }; log.Printf("read CDC message: %v", err); time.Sleep(time.Second); continue }
-		var envelope DebeziumMessage
-		if err := json.Unmarshal(msg.Value, &envelope); err != nil { log.Printf("decode CDC message: %v", err); continue }
-		p := envelope.Payload
-		if p.Op == "d" && p.Before != nil {
-			err = s.deleteEvent(ctx, p.Before.ID)
-		} else if p.After != nil {
-			err = s.indexEvent(ctx, *p.After)
-		}
 		if err != nil {
-			log.Printf("index CDC offset %d: %v; retrying without committing", msg.Offset, err)
+			if ctx.Err() != nil { return }
+			log.Printf("read CDC message: %v", err)
 			time.Sleep(time.Second)
 			continue
+		}
+		var envelope DebeziumMessage
+		if err := json.Unmarshal(msg.Value, &envelope); err != nil {
+			// A malformed record must not block the partition forever. Production deployments
+			// should publish this record to a dead-letter topic before committing it.
+			log.Printf("invalid CDC message at offset %d (skipping; add DLQ for production): %v", msg.Offset, err)
+		} else {
+			p := envelope.Payload
+			for {
+				if p.Op == "d" && p.Before != nil {
+					err = s.deleteEvent(ctx, p.Before.ID)
+				} else if p.After != nil {
+					err = s.indexEvent(ctx, *p.After)
+				} else {
+					err = nil // heartbeat or transaction metadata record
+				}
+				if err == nil { break }
+				log.Printf("index CDC offset %d: %v; retrying", msg.Offset, err)
+				select {
+				case <-ctx.Done(): return
+				case <-time.After(time.Second):
+				}
+			}
 		}
 		if err := r.CommitMessages(ctx, msg); err != nil {
 			log.Printf("commit CDC offset %d: %v", msg.Offset, err)
