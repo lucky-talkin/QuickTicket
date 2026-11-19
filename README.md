@@ -11,6 +11,7 @@ Each Go microservice is an independent Go module with its own `go.mod`, `go.sum`
 - `services/booking/`
 - `services/waiting-room/` (HTTP handlers, queue service, admission-token service)
 - `services/booking-events/`
+- `services/search/` (Elasticsearch query API and Debezium CDC indexer)
 
 Docker Compose builds each service separately using that directory as its build context. The Dockerfile downloads dependencies, builds a static Go binary, and copies only the binary into a minimal runtime image.
 
@@ -28,6 +29,7 @@ docker compose build inventory
 docker compose build booking
 docker compose build waiting-room
 docker compose build booking-events
+docker compose build search
 ```
 
 To run the stack:
@@ -45,8 +47,9 @@ docker compose up
 | Booking | `http://localhost:8083` | Bookings and mock payment |
 | Waiting Room | `http://localhost:8084` | FIFO queue and admission tokens |
 | Booking Events | background worker | Consumes Kafka booking events |
+| Search | `http://localhost:8085` | Event discovery API backed by Elasticsearch; index populated from PostgreSQL CDC |
 
-Infrastructure: PostgreSQL (5432), Redis (6379), Kafka (9092).
+Infrastructure: PostgreSQL (5432, logical WAL enabled), Redis (6379), Kafka (9092), Debezium Connect (8083), Elasticsearch (9200).
 
 ## Seed Bengaluru events and demo tickets
 
@@ -89,6 +92,7 @@ curl http://localhost:8081/health
 curl http://localhost:8082/health
 curl http://localhost:8083/health
 curl http://localhost:8084/health
+curl http://localhost:8085/health
 ```
 
 Expected response:
@@ -100,7 +104,7 @@ Expected response:
 Follow logs:
 
 ```bash
-docker compose logs -f catalog inventory waiting-room booking booking-events
+docker compose logs -f catalog inventory waiting-room booking booking-events search debezium
 ```
 
 > **Existing Docker volume:** the schema file is only applied automatically when PostgreSQL initializes an empty data volume. If you already ran an older version, apply the migration in `db/migrations/002_allow_ticket_rebooking.sql` manually (see Database migration below). To reset all local data instead, run `docker compose down -v` and then `docker compose up --build`.
@@ -352,7 +356,7 @@ curl http://localhost:8083/bookings
 | Booking | GET | `/bookings` | List bookings |
 | Booking | POST | `/bookings` | Create booking with mock payment |
 
-All four HTTP services also expose `GET /health`.
+Search also exposes `GET /health` and `GET /search`. Example: `curl 'http://localhost:8085/search?q=music&type=concert&page=1&size=20'`. Search filters include `q`, `type`, `venue_id`, `from`, `to`, `page`, and `size`. Search is eventually consistent with PostgreSQL.
 
 ## 9. Expected errors
 
@@ -422,6 +426,12 @@ docker compose exec -T postgres psql -U quickticket -d quickticket < db/migratio
 ```
 
 New databases get the outbox table automatically from `db/schema.sql`.
+
+## Search and CDC
+
+Search is a separate read-only service. PostgreSQL remains the source of truth; Debezium reads event-table changes from PostgreSQL logical WAL and publishes them to Kafka topic `quickticket.public.events`. The Go Search consumer indexes event documents in Elasticsearch using the event ID as the document ID. The initial Debezium snapshot populates existing events; subsequent inserts, updates, and deletes maintain the index. See [Search CDC design and API](docs/SEARCH_CDC.md).
+
+For existing Docker volumes, the PostgreSQL container is configured to start with `wal_level=logical`; restart the PostgreSQL container after updating Compose so the setting takes effect. Connector registration is automatic on Compose startup. This is a local development setup without Elasticsearch authentication or production-grade Kafka Connect replication.
 
 ## Scope and known limitations
 
