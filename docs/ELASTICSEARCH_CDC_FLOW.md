@@ -128,7 +128,7 @@ Check Search and Debezium:
 
 ```bash
 curl http://localhost:8085/health
-curl http://localhost:8083/connectors/quickticket-postgres/status
+curl http://localhost:8086/connectors/quickticket-postgres/status
 ```
 
 Create an event through Catalog, then query it through Search after CDC has propagated:
