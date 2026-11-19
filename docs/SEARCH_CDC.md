@@ -48,7 +48,7 @@ curl 'http://localhost:8085/search?q=music'
 Debezium Connect registers the connector automatically via the one-shot registration container. Inspect connector state:
 
 ```bash
-curl http://localhost:8083/connectors/quickticket-postgres/status
+curl http://localhost:8086/connectors/quickticket-postgres/status
 docker compose logs -f debezium search
 ```
 
