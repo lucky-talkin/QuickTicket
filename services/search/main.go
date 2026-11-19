@@ -64,7 +64,7 @@ func (s *SearchAPI) consume(ctx context.Context, brokers, topic, group string) {
 	r := kafka.NewReader(kafka.ReaderConfig{Brokers: strings.Split(brokers, ","), Topic: topic, GroupID: group, MinBytes: 1, MaxBytes: 10e6})
 	defer r.Close()
 	for {
-		msg, err := r.ReadMessage(ctx)
+		msg, err := r.FetchMessage(ctx)
 		if err != nil { if ctx.Err() != nil { return }; log.Printf("read CDC message: %v", err); time.Sleep(time.Second); continue }
 		var envelope DebeziumMessage
 		if err := json.Unmarshal(msg.Value, &envelope); err != nil { log.Printf("decode CDC message: %v", err); continue }
@@ -74,7 +74,14 @@ func (s *SearchAPI) consume(ctx context.Context, brokers, topic, group string) {
 		} else if p.After != nil {
 			err = s.indexEvent(ctx, *p.After)
 		}
-		if err != nil { log.Printf("index CDC offset %d: %v", msg.Offset, err); continue }
+		if err != nil {
+			log.Printf("index CDC offset %d: %v; retrying without committing", msg.Offset, err)
+			time.Sleep(time.Second)
+			continue
+		}
+		if err := r.CommitMessages(ctx, msg); err != nil {
+			log.Printf("commit CDC offset %d: %v", msg.Offset, err)
+		}
 	}
 }
 
