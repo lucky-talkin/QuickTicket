@@ -49,7 +49,7 @@ docker compose up
 | Booking Events | background worker | Consumes Kafka booking events |
 | Search | `http://localhost:8085` | Event discovery API backed by Elasticsearch; index populated from PostgreSQL CDC |
 
-Infrastructure: PostgreSQL (5432, logical WAL enabled), Redis (6379), Kafka (9092), Debezium Connect (8083), Elasticsearch (9200).
+Infrastructure: PostgreSQL (5432, logical WAL enabled), Redis (6379), Kafka (9092), Debezium Connect (host port 8086, container port 8083), Elasticsearch (9200).
 
 ## Seed Bengaluru events and demo tickets
 
