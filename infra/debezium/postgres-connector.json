@@ -1,0 +1,18 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "database.hostname": "postgres",
+  "database.port": "5432",
+  "database.user": "quickticket",
+  "database.password": "quickticket",
+  "database.dbname": "quickticket",
+  "topic.prefix": "quickticket",
+  "plugin.name": "pgoutput",
+  "slot.name": "quickticket_search_slot",
+  "publication.name": "quickticket_search_publication",
+  "publication.autocreate.mode": "filtered",
+  "table.include.list": "public.events",
+  "tombstones.on.delete": "false",
+  "snapshot.mode": "initial",
+  "decimal.handling.mode": "string",
+  "time.precision.mode": "connect"
+}
